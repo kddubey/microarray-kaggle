@@ -60,7 +60,6 @@ clean.gene.data = function(X) {
   X = melt(X, id.vars="Gene.Accession.Number")
   X = spread(X, Gene.Accession.Number, value)
   X = dplyr::select(X, -variable)
-    
   
   # Note that features were already re-scaled, which is necessary
   # for SVMs. 
@@ -182,7 +181,7 @@ plot.hp.error = function(hp1, hp2, errors, hp1.name, hp2.name) {
     # Plots error according to hyperparemter settings. 
     # hp1 appears on the x-axis. hp2 is paritioned into
     # different colors. 
-    # errors is the matrix such that hyperparemter settings
+    # errors is the matrix such that hyperparameter settings
     # hp1[i] and hp2[j] resulted in errors[i,j]. 
     plot(hp1, errors[,1], type="l",
          xlab=hp1.name, ylab="Proportion misclassified",
@@ -197,10 +196,11 @@ plot.hp.error = function(hp1, hp2, errors, hp1.name, hp2.name) {
 
 plot.hp.error(lambdas, iters, errors, 
               "lambda", "maxIters")
+
 plot.hp.error(iters, lambdas, t(errors), 
               "maxIters", "lambda")
 
-# Here's an interactive 3D plot for "fun" that you can run
+# Here's an interactive 3D plot that you can run for "fun"
 #library(plotly) # plot_ly, layout functions
 #errors.df = data.frame(x = rep(lambdas, each=length(iters)),
 #                       y = rep(iters, length(lambdas)),
@@ -235,11 +235,12 @@ paste("Patient", which(misclassifieds) + n.tr,
 
 colnames(X.tr)[model$xind]
 
-bootstrap.data = function(X.tr, y.tr, 
+bootstrap.data = function(X, y, 
                           N.sim=20, lambda=1.25, maxIter=2000) {
-    # model.coeffs[i,j] is the value of the coefficient of gene
-    # i in simulation j
-    d = ncol(X.tr)
+    # model.coeffs[i,j] is the coefficient estimate for gene i
+    # in simulation j
+    n = nrow(X)
+    d = ncol(X)
     model.coeffs = matrix(rep(0, d*N.sim), d, N.sim)
     # count.selected[i] is the number of times that gene i is
     # selected over N.sim simulations
@@ -247,9 +248,9 @@ bootstrap.data = function(X.tr, y.tr,
     for (k in 1:N.sim) {
       # form bootstrap sample
       set.seed(k*123)
-      boot.inds = sample(n.tr, n.tr, replace=TRUE)
-      X.boot = X.tr[boot.inds,]
-      y.boot = y.tr[boot.inds]
+      boot.inds = sample(n, n, replace=TRUE)
+      X.boot = X[boot.inds,]
+      y.boot = y[boot.inds]
       # train model on this data
       model.boot = scadsvc(X.boot, y=y.boot, lambda=lambda,
                            maxIter=maxIter, verbose=FALSE)
@@ -264,29 +265,37 @@ bootstrap.data = function(X.tr, y.tr,
                 "count.selected"=count.selected))
 }
 
-plot.selected = function(count.selected, N.sim) {
+plot.selected = function(count.selected, N.sim, 
+                         count.thresh=5) {
     # Plot number of simulations that each gene was selected,
     # i.e., has non-zero weight. 
-    # Don't plot genes that are never selected. 
-    selected.inds = which(count.selected > 1)
+    # Only plot genes that are selected at least count.thresh
+    # times.  
+    selected.inds = which(count.selected >= count.thresh)
     selected.genes = colnames(X.tr)[selected.inds]
     num.selections = count.selected[selected.inds]
-    title = paste("Genes selected twice or more in", 
+    # plot
+    title = paste("Genes selected", count.thresh, 
+                  "times or more in", 
                   N.sim, "bootstrapped datasets")
-    ggplot(mapping = aes(x=selected.genes, y=num.selections)) +
-        geom_bar(stat = "identity") +
-        theme(axis.text.x = element_text(angle=90),
-              plot.title = element_text(face='bold',hjust=0.5)) +
-        labs(title = title,
-             x = "Gene accession number", 
-             y = "Number of simulations selected")
+    ggplot(mapping=aes(x=reorder(selected.genes,-num.selections), 
+                       y=num.selections)) +
+        geom_bar(stat="identity", fill="steelblue") +
+        theme(axis.text.x=element_text(angle=90),
+              plot.title=element_text(face='bold',hjust=0.5)) +
+        labs(title=title,
+             x="Gene accession number", 
+             y="Number of simulations selected")
 }
 
-N.sim = 50 # number of bootstrap simulations
+X = rbind(X.tr, X.te)
+y = c(y.tr, y.te)
+
+N.sim = 100 # number of bootstrap simulations
 lambda = 1.25
 maxIter = 2000
 
-bootstrap.result = bootstrap.data(X.tr, y.tr, N.sim, 
+bootstrap.result = bootstrap.data(X, y, N.sim, 
                                   lambda=lambda, maxIter=maxIter)
 
 model.coeffs = bootstrap.result$model.coeffs
@@ -300,20 +309,20 @@ sim.df
 
 sum(count.selected != 0)
 
-top3.genes = c('M27891_at', 'M96326_rna1_at', 'Y00787_s_at')
-top3.gene.inds = match(top3.genes, colnames(X.tr))
-num.together = colSums(model.coeffs[top3.gene.inds,] != 0)
+top4.genes = c('M19507_at', 'M27891_at', 'M96326_rna1_at', 'Y00787_s_at')
+top4.gene.inds = match(top4.genes, colnames(X))
+num.together = colSums(model.coeffs[top4.gene.inds,] != 0)
 as.data.frame(table(num.together))
 
 # form dataframe
-top3.df = data.frame(t(model.coeffs[top3.gene.inds,]))
-names(top3.df) = top3.genes
-top3.df = gather(top3.df, "gene", "coefficient")
+top4.df = data.frame(t(model.coeffs[top4.gene.inds,]))
+names(top4.df) = top4.genes
+top4.df = gather(top4.df, "gene", "coefficient")
 # only examine coefficient if it's non-zero
-top3.df = top3.df[top3.df$coefficient != 0, ]
+top4.df = top4.df[top4.df$coefficient != 0, ]
 
-for (gene in top3.genes) {
-    gene.df = top3.df[top3.df$gene == gene,]
+for (gene in top4.genes) {
+    gene.df = top4.df[top4.df$gene == gene,]
     p = ggplot(gene.df, aes(x=coefficient, 
                             color=gene, 
                             fill=gene)) +
@@ -321,14 +330,13 @@ for (gene in top3.genes) {
     print(p)
 }
 
-mean(top3.df$coefficient < 0)
+mean(top4.df$coefficient < 0)
 
-min(top3.df$coefficient)
+min(top4.df$coefficient)
 
-max(top3.df$coefficient)
+max(top4.df$coefficient)
 
-# ignore M19507_at since it's unstable. 
-# see footnote 2. 
+# see footnote 2
 print(model$w)
 
 calibration.stats = function(labels, pred.probs, bins=10) {
