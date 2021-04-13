@@ -219,7 +219,7 @@ lambda = lambdas[best.ind[[1]]] # 1.25
 maxIter = iters[best.ind[[2]]]  # 2000
 
 # The seed of the scadsvc function is set to 123 by default
-model = scadsvc(X.tr, y=y.tr, lambda=lambda, maxIter=2000,
+model = scadsvc(X.tr, y=y.tr, lambda=lambda, maxIter=maxIter,
                 verbose=TRUE)
 
 preds.tr = sign(X.tr[,model$xind] %*% model$w + model$b)
