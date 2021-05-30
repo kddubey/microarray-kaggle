@@ -1,11 +1,17 @@
+
+# for internal use
+# Install the penalizedSVM package into my Kaggle workspace
+install.packages("penalizedSVM", lib="/kaggle/working")
+library(penalizedSVM, lib="/kaggle/working")
+
 # Modeling
-library(penalizedSVM) # scadsvc function
-library(caret)        # confusionMatrix function
-library(plyr)         # ldply function
+library(penalizedSVM) # scadsvc fxn
+library(caret)        # confusionMatrix fxn
+library(plyr)         # ldply fxn
 
 # Cleaning
-library(tidyverse)    # select (masks MASS::select), spread functions
-library(reshape2)     # melt function
+library(tidyverse)    # select (masks MASS::select), spread fxns
+library(reshape2)     # melt fxn
 
 PATH.TO.DATA = '../input/gene-expression'
 
@@ -106,7 +112,7 @@ y.te = y.bin[(n.tr+1):n]
 print(paste(ncol(X.tr), "features (genes),",
             nrow(X.tr), "examples (patients)"))
 
-search.hp.loocv = function(X, y, lambdas, iters, verbose=TRUE) {
+tune.hp.loocv = function(X, y, lambdas, iters, verbose=TRUE) {
   # Returns a matrix called errors where errors[i,j] is the
   # proportion of LOOCV model misclassifications for the SCAD SVM
   # trained using hyperparameter settings lambda=lambdas[i] and
@@ -169,7 +175,7 @@ lambdas = seq(0, 1.5, by=0.25) # random search: runif(7, 0, 1.5)
 iters = c(1000, 2000)
 
 tune.time = system.time({
-  loocv.result = search.hp.loocv(X.tr, y.tr, lambdas, iters)
+  loocv.result = tune.hp.loocv(X.tr, y.tr, lambdas, iters)
 })
 
 errors = loocv.result$errors
@@ -309,7 +315,8 @@ sim.df
 
 sum(count.selected != 0)
 
-top4.genes = c('M19507_at', 'M27891_at', 'M96326_rna1_at', 'Y00787_s_at')
+top4.genes = c('M19507_at', 'M27891_at', 'M96326_rna1_at', 
+               'Y00787_s_at')
 top4.gene.inds = match(top4.genes, colnames(X))
 num.together = colSums(model.coeffs[top4.gene.inds,] != 0)
 as.data.frame(table(num.together))
@@ -336,12 +343,11 @@ min(top4.df$coefficient)
 
 max(top4.df$coefficient)
 
-# see footnote 2
 print(model$w)
 
 calibration.stats = function(labels, pred.probs, bins=10) {
     # bins is an upper bound on the number of bins used to
-    # measure calibration. 
+    # measure calibration
     require(plyr)
     bin.pred = cut(pred.probs, bins)
     res = ldply(levels(bin.pred), function(x) {
@@ -349,7 +355,7 @@ calibration.stats = function(labels, pred.probs, bins=10) {
         pred.mean = mean(pred.probs[idx])
         obs.mean = mean(labels[idx])
         bin.size = sum(idx)
-        se = sqrt((obs.mean * (1 - obs.mean)) / bin.size) 
+        se = sqrt((obs.mean * (1 - obs.mean)) / bin.size)
         ll = max(0, obs.mean - 1.96*se)
         ul = min(1, obs.mean + 1.96*se)
         c(pred.mean, obs.mean, bin.size, ll, ul)
@@ -400,6 +406,7 @@ transform.target = function(y) {
 
 data.tr = data.frame(x=outputs.loocv, y=transform.target(y.tr))
 
+# optimization functions specifically for Platt scaling
 pred.prob = function(x, par) {
   X = cbind(rep(1, length(x)), x)
   z = X %*% par
@@ -413,9 +420,20 @@ kld.loss = function(par, data) {
   return(-sum(y*log(p) + (1-y)*log(1-p)))
 }
 
+kld.loss.grad = function(par, data) {
+  x = data$x
+  y = data$y
+  p = pred.prob(x, par)
+  X = cbind(rep(1, length(x)), x)
+  return(-t(X) %*% (y-p))
+}
+
 # perform optimization
+# no need for L-BFGS as this is just a 2-parameter problem
 init.par = c(0, 0) # intial intercept, slope
-result = optim(init.par, kld.loss, data=data.tr)
+result = optim(init.par, kld.loss,
+               gr=kld.loss.grad, data=data.tr,
+               method='BFGS')
 
 outputs.te = X.te[,model$xind] %*% model$w + model$b
 pred.te.probs = pred.prob(outputs.te, result$par)
@@ -459,14 +477,14 @@ fn = conf.mat$table[1,2] # false negatives
 fp = conf.mat$table[2,1] # false positives
 tp = conf.mat$table[2,2] # true positives
 
-# Pr(patient has ALL | model predicts patient has ALL) =
+# Pr(patient has ALL | model predicts patient has ALL) ≈
 ppv = tp/(tp + fp)
-# Pr(patient has AML | model predicts patient has AML) =
+# Pr(patient has AML | model predicts patient has AML) ≈
 npv = tn/(tn + fn)
 
-# Pr(model predicts patient has ALL | patient has ALL) =
+# Pr(model predicts patient has ALL | patient has ALL) ≈
 tpr = tp/(tp + fn)
-# Pr(model predicts patient has AML | patient has AML) =
+# Pr(model predicts patient has AML | patient has AML) ≈
 tnr = tn/(tn + fp)
 
 metrics = c("Positive predictive value (PPV)", 
@@ -475,14 +493,16 @@ metrics = c("Positive predictive value (PPV)",
             "True negative rate (TNR)")
 data.frame(metric=metrics, score=c(ppv, npv, tpr, tnr))
 
-hoeffding.inequality = function(m, n, eps) {2*m*exp(-2*n*eps^2)}
+hoeffding.inequality = function(m, n, eps) {
+    return( m * 2*exp(-2*n*eps^2) )
+}
 
 m = 2
 eps = 0.1
 hoeffding.inequality(m, n.te, eps)
 
 hoeffding.sample.size = function(m, p, eps) {
-    (log(2) + log(m) - log(p))/(2*eps^2)
+    (log(2) + log(m) - log(p)) / (2*eps^2)
 }
 
 m = 1
